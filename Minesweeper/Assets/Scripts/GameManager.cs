@@ -3,7 +3,17 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 
+//
+// TODO
+//// Lay the mines after the user clicks and make sure there is a "safe zone" around the initial click - decrease chances of mine spawning on the edges
+//// Jazz up the game over animation - spawn a particle where the mine explodes
+////
+//// MAYBE: Fix the button spawning locations on the canvas so it can all scale nicely (I am afraid of the UI system in Unity)
+//
+
 public class GameManager : MonoBehaviour {
+
+    public GameOver gameOver;
 
     public GameObject TilePrefab;
     public int Width = 10;
@@ -11,19 +21,63 @@ public class GameManager : MonoBehaviour {
     public int NumberOfMines = 10;
     public Transform TileParent;
 
+    public int ChanceForEdgeSpawn = 30;
+
+    public int currentMines;
+    public float currentTime = 0;
+
+    public bool isGameStarted = false;
+    public bool isGameOver = false;
+
     public float tileXOffset, tileYOffset;
 
     private Tile[,] tiles;
     private Dictionary<Tile, GameObject> tileToGameObjectMap;
     private Dictionary<GameObject, Tile> gameObjectToTileMap;
 
+    // GUI elements
+    public Text RemainingTimeText;
+    public Text RemainingMinesText;
+
     // Use this for initialization
-    void Start () {
+    void Start ()
+    {
+        gameOver = GetComponent<GameOver>();
         SetupTiles();
-        LayMines();
         ConfigureTiles();
+    }
+
+    private void Update()
+    {
+        if (isGameStarted && !isGameOver)
+        {
+            currentTime += Time.deltaTime;
+
+            if (AllTilesRevealed())
+            {
+                GameOver(null);
+            }
+
+            UpdateGUI();
+        }        
+    }
+
+    public void StartGame(Tile tile)
+    {
+        LayMines(tile);
         CalculateTileNumbers();
-	}
+        UpdateGUI();
+
+        isGameStarted = true;
+
+        StartCoroutine(tile.Reveal());
+    }
+
+    void UpdateGUI()
+    {
+        RemainingMinesText.text = "Mines: " + currentMines.ToString();
+        RemainingTimeText.text = "Time: " + Mathf.Ceil(currentTime).ToString();
+    }
 
     void SetupTiles()
     {
@@ -52,23 +106,64 @@ public class GameManager : MonoBehaviour {
         }
     }
 
-    void LayMines()
+    void LayMines(Tile clickedTile)
     {
-        int currentMines = 0;
+        int layedMines = 0;
         int currentPasses = 0;
         int randX = 0;
         int randY = 0;
         Tile tile;
 
-        while(currentMines < NumberOfMines)
+        // create a list of tiles that will not be mine-able
+        List<Tile> excludeList = new List<Tile>();
+        
+        // Add current tile to list
+        excludeList.Add(clickedTile);
+
+        // Add current tiles' neighbours
+        foreach(Tile t in clickedTile.neighbours)
         {
-            if(currentPasses > 10)
+            excludeList.Add(t);
+        }
+
+        while (layedMines < NumberOfMines)
+        {
+            if(currentPasses > 1000)
             {
                 Debug.LogError("Too many passes");
                 break;
             }
-            randX = Random.Range(0, Width-1);
-            randY = Random.Range(0, Height-1);
+
+            randX = Random.Range(0, Width);
+            randY = Random.Range(0, Height);
+
+            // pass if the mine would be placed on any of the excludeList tiles
+            bool inList = false;
+            foreach (Tile t in excludeList)
+            {
+
+                if (randX == t.x && randY == t.y)
+                {
+                    inList = true;                    
+                }
+            }    
+            if (inList)
+            {
+                currentPasses++;
+                continue;
+            }        
+
+            // maybe pass if the mine would be on the edge bounds a decrease edge spawn rate
+            if ((randX == 0 || randY == 0 || randX == Width-1 || randY == Height - 1))
+            {
+                // if the random number is higher than the ChanceForEdgeSpawn the pass
+                int randChance = Random.Range(0, 100);
+                if(randChance > ChanceForEdgeSpawn)
+                {
+                    currentPasses++;
+                    continue;
+                }                
+            }
 
             tile = GetTileAt(randX, randY);
             if (tile.isMined)
@@ -79,10 +174,14 @@ public class GameManager : MonoBehaviour {
             else
             {
                 tile.isMined = true;
+                layedMines++;
                 currentMines++;
                 currentPasses = 0;
             }
         }
+
+        // We've started.  Add to the total number of games we've played
+        PlayerPrefs.SetInt("GamesPlayed", PlayerPrefs.GetInt("GamesPlayed", 0) + 1);
     }
 
     void ConfigureTiles()
@@ -148,7 +247,6 @@ public class GameManager : MonoBehaviour {
                     }
                 }
                 tiles[x, y].surroundingMines = mineCount;
-                //tiles[x, y].SetText();
             }
         }
     }
@@ -189,5 +287,44 @@ public class GameManager : MonoBehaviour {
         }
 
         return null;
+    }
+
+    public void GameOver(Tile minedTile)
+    {
+        if (AllTilesRevealed())
+        {
+            Debug.Log("YOU WON!!!");
+            // Add to the win count!
+            PlayerPrefs.SetInt("GamesWon", PlayerPrefs.GetInt("GamesWon", 0) + 1);
+            if(PlayerPrefs.GetInt("BestTime", 999) < currentTime)
+            {
+                PlayerPrefs.SetInt("BestTime", Mathf.RoundToInt(currentTime));
+                PlayerPrefs.SetString("BestTimeDate", "Sort Dates");
+            }
+            gameOver.Show(true);
+        }
+        else
+        {
+            foreach (Tile t in tiles)
+            {
+                if(t.isMined)
+                    t.SetText();
+            }
+
+            gameOver.Show(false);
+        }
+
+        isGameOver = true;
+    }
+
+    public bool AllTilesRevealed()
+    {
+        foreach(Tile t in tiles)
+        {
+            if (!t.isRevealed && !t.isFlagged)
+                return false;
+        }
+
+        return true;
     }
 }
